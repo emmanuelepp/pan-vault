@@ -1,0 +1,229 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  IMAGE: pan-vault:ci
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
+  CALICO_VERSION: v3.32.1
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore PanVault.slnx
+
+      - name: Build
+        run: dotnet build PanVault.slnx --no-restore -c Release
+
+      - name: Test
+        run: dotnet test PanVault.slnx --no-build -c Release
+
+  image:
+    name: Build image, scan, publish
+    needs: build-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build image
+        run: docker build -t "$IMAGE" .
+
+      - name: Scan with Trivy
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+              --exit-code 1 \
+              --severity HIGH,CRITICAL \
+              "$IMAGE"
+
+      - name: Push to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag "$IMAGE" "$REGISTRY_IMAGE:${{ github.sha }}"
+          docker tag "$IMAGE" "$REGISTRY_IMAGE:latest"
+          docker push "$REGISTRY_IMAGE:${{ github.sha }}"
+          docker push "$REGISTRY_IMAGE:latest"
+
+  e2e:
+    name: Deploy to kind and verify controls
+    needs: build-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build image
+        run: docker build -t "$IMAGE" .
+
+      - name: Write kind config
+        run: |
+          cat > /tmp/kind.yaml <<'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          networking:
+            disableDefaultCNI: true
+            podSubnet: "192.168.0.0/16"
+          EOF
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: pan-vault
+          config: /tmp/kind.yaml
+
+      - name: Install Calico
+        run: |
+          kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/calico.yaml"
+          kubectl -n kube-system rollout status daemonset/calico-node --timeout=300s
+          kubectl -n kube-system wait --for=condition=Ready pod \
+            --selector=k8s-app=kube-dns --timeout=300s
+
+      - name: Load image into the cluster
+        run: kind load docker-image "$IMAGE" --name pan-vault
+
+      - name: Create namespace and DEK
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl create secret generic pan-vault-dek \
+            --namespace cde \
+            --from-literal=PanCrypto__Dek="$(openssl rand -base64 32)"
+
+      - name: Deploy
+        run: |
+          kubectl apply -f k8s/
+          kubectl -n cde rollout status deploy/pan-vault --timeout=180s
+
+      - name: Port-forward the service
+        run: |
+          kubectl -n cde port-forward svc/pan-vault 8080:8080 &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the service never became reachable"
+          exit 1
+
+      - name: SAD is rejected, including nested and inside arrays
+        run: |
+          for payload in \
+            '{"pan":"4111111111111111","cvv":"123"}' \
+            '{"pan":"4111111111111111","card":{"cvv":"123"}}' \
+            '{"pan":"4111111111111111","items":[{"pin":"1234"}]}'
+          do
+            code=$(curl -s -o /tmp/body -w '%{http_code}' \
+              -X POST http://localhost:8080/tokens \
+              -H 'Content-Type: application/json' -d "$payload")
+            echo "$payload -> $code $(cat /tmp/body)"
+            if [ "$code" != "400" ]; then
+              echo "::error::expected 400, got $code"
+              exit 1
+            fi
+          done
+
+      - name: Invalid PAN is rejected
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -X POST http://localhost:8080/tokens \
+            -H 'Content-Type: application/json' \
+            -d '{"pan":"4111111111111112"}')
+          if [ "$code" != "400" ]; then
+            echo "::error::expected 400, got $code"
+            exit 1
+          fi
+
+      - name: Tokenize, then read back only masked data
+        run: |
+          token=$(curl -s -X POST http://localhost:8080/tokens \
+            -H 'Content-Type: application/json' \
+            -d '{"pan":"378282246310005"}' | grep -o 'tok_[a-f0-9]*')
+          if [ -z "$token" ]; then
+            echo "::error::no token returned"
+            exit 1
+          fi
+
+          body=$(curl -s "http://localhost:8080/tokens/$token")
+          echo "$body"
+          if ! echo "$body" | grep -q '"maskedPan":"378282\*\*\*\*\*0005"'; then
+            echo "::error::PAN is not masked as expected"
+            exit 1
+          fi
+          if echo "$body" | grep -q '378282246310005'; then
+            echo "::error::the response leaked the full PAN"
+            exit 1
+          fi
+          if echo "$body" | grep -qi 'cipher'; then
+            echo "::error::the response leaked the ciphertext"
+            exit 1
+          fi
+
+      - name: API docs are not exposed
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/swagger)
+          if [ "$code" != "404" ]; then
+            echo "::error::expected 404, got $code"
+            exit 1
+          fi
+
+      - name: Logs contain no PAN
+        run: |
+          kubectl -n cde logs deploy/pan-vault --tail=500 > /tmp/pod.log
+          cat /tmp/pod.log
+          if grep -Eq '[0-9]{12,19}' /tmp/pod.log; then
+            echo "::error::a card-number-like sequence appears in the logs"
+            exit 1
+          fi
+
+      - name: Network isolation is enforced
+        run: |
+          # From the default namespace: the NetworkPolicy must block it.
+          if kubectl run probe-default --rm -i --restart=Never \
+               --image=busybox:1.36 -- \
+               wget -qO- --timeout=5 http://pan-vault.cde:8080/healthz \
+               > /tmp/deny.log 2>&1; then
+            echo "::error::traffic from outside the CDE namespace was allowed"
+            cat /tmp/deny.log
+            exit 1
+          fi
+          if ! grep -q 'timed out' /tmp/deny.log; then
+            echo "::error::expected a timeout, got:"
+            cat /tmp/deny.log
+            exit 1
+          fi
+
+          # From inside the namespace, with the authorized label: must succeed.
+          kubectl run probe-gateway --rm -i --restart=Never -n cde \
+            --labels=app=gateway --image=busybox:1.36 -- \
+            wget -qO- --timeout=5 http://pan-vault:8080/healthz > /tmp/allow.log 2>&1
+          if ! grep -q '"status":"ok"' /tmp/allow.log; then
+            echo "::error::authorized traffic was blocked"
+            cat /tmp/allow.log
+            exit 1
+          fi
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get all,networkpolicy -n cde || true
+          kubectl -n cde describe pod -l app=pan-vault || true
+          kubectl -n cde logs deploy/pan-vault --tail=200 || true
+          kubectl get pods -A || true
