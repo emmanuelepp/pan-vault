@@ -1,6 +1,6 @@
 namespace PanVault.Api.Tokens;
 
-public sealed record TokenizeRequest(string Pan, string? Expiry);
+public sealed record TokenizeRequest(string Pan);
 
 public sealed record TokenizeResponse(string Token, string Last4, string Brand);
 
