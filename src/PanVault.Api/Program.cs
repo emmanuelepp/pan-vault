@@ -1,6 +1,18 @@
+using PanVault.Api.Crypto;
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
+
+builder.Services
+    .AddOptions<PanCryptoOptions>()
+    .Bind(builder.Configuration.GetSection(PanCryptoOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(o => Convert.TryFromBase64String(o.Dek, new byte[32], out var n) && n == 32,
+          "PanCrypto:Dek must be a base64-encoded 32-byte key.")
+    .ValidateOnStart();
+
+builder.Services.AddSingleton<PanCrypto>();
 
 var app = builder.Build();
 
