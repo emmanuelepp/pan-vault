@@ -1,0 +1,6 @@
+@PanVault.Api_HostAddress = http://localhost:5191
+
+GET {{PanVault.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
