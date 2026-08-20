@@ -1,3 +1,4 @@
+using OpenTelemetry.Metrics;
 using PanVault.Api.Crypto;
 using PanVault.Api.Tokens;
 using PanVault.Api.Validation;
@@ -8,6 +9,12 @@ var enableApiDocs = builder.Configuration.GetValue<bool>("PanVault:EnableApiDocs
 
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole();
+
+builder.Services.AddOpenTelemetry()
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddMeter(SadGuardMiddleware.MeterName)
+        .AddPrometheusExporter());
 
 if (enableApiDocs) builder.Services.AddOpenApi();
 
@@ -25,6 +32,8 @@ builder.Services.AddSingleton<TokenStore>();
 var app = builder.Build();
 
 app.UseSadGuard();
+
+app.MapPrometheusScrapingEndpoint().RequireHost("*:9090");
 
 if (enableApiDocs)
 {
