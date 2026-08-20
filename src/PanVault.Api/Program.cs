@@ -1,8 +1,15 @@
 using PanVault.Api.Crypto;
+using PanVault.Api.Tokens;
+using PanVault.Api.Validation;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddOpenApi();
+var enableApiDocs = builder.Configuration.GetValue<bool>("PanVault:EnableApiDocs");
+
+builder.Logging.ClearProviders();
+builder.Logging.AddJsonConsole();
+
+if (enableApiDocs) builder.Services.AddOpenApi();
 
 builder.Services
     .AddOptions<PanCryptoOptions>()
@@ -13,10 +20,13 @@ builder.Services
     .ValidateOnStart();
 
 builder.Services.AddSingleton<PanCrypto>();
+builder.Services.AddSingleton<TokenStore>();
 
 var app = builder.Build();
 
-if (app.Configuration.GetValue<bool>("PanVault:EnableApiDocs"))
+app.UseSadGuard();
+
+if (enableApiDocs)
 {
     app.MapOpenApi();
     app.UseSwaggerUI(o =>
@@ -25,6 +35,29 @@ if (app.Configuration.GetValue<bool>("PanVault:EnableApiDocs"))
         o.RoutePrefix = "swagger";
     });
 }
+
+app.MapPost("/tokens", (TokenizeRequest request, PanCrypto crypto, TokenStore store, ILogger<Program> logger) =>
+{
+    if (!LuhnValidator.IsValid(request.Pan))
+        return Results.BadRequest(new { error = "invalid_pan" });
+
+    var brand = PanMasker.Brand(request.Pan);
+    var last4 = PanMasker.Last4(request.Pan);
+    var token = store.Add(crypto.Encrypt(request.Pan), PanMasker.Mask(request.Pan), brand);
+
+    logger.LogInformation("Token issued {Token} {Brand} {Last4}", token, brand, last4);
+
+    return Results.Created($"/tokens/{token}", new TokenizeResponse(token, last4, brand));
+});
+
+app.MapGet("/tokens/{token}", (string token, TokenStore store) =>
+{
+    var entry = store.Get(token);
+
+    return entry is null
+        ? Results.NotFound()
+        : Results.Ok(new TokenDetails(token, entry.MaskedPan, entry.Brand, entry.CreatedAt));
+});
 
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
 
