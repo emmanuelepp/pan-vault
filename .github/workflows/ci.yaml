@@ -6,7 +6,7 @@ on:
   pull_request:
 
 env:
-  IMAGE: pan-vault:ci
+  IMAGE: pan-vault:dev
   REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
   CALICO_VERSION: v3.32.1
 
