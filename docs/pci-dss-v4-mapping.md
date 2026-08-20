@@ -27,7 +27,7 @@ contains it, and to the command that verifies it.
 | 10 | No Kubernetes API credentials in the pod | 7.2.1, 7.2.2 | `k8s/serviceaccount.yaml`, `k8s/deployment.yaml` |
 | 11 | Default-deny network segmentation | 1.2.1, 1.3.1, 1.4.1 | `k8s/networkpolicy.yaml` |
 | 12 | No cardholder data in logs | 3.3.1, 10.2.1 | `src/PanVault.Api/Program.cs` |
-| 13 | Components free of known vulnerabilities | 6.3.3 | `docs/trivy-report.txt` |
+| 13 | Components free of known vulnerabilities | 6.3.3 | `docs/trivy-report.txt`, `.github/workflows/ci.yaml` |
 | 14 | Targeted risk analysis | 12.3.1 | `docs/targeted-risk-analysis.md` |
 
 ## Verification
@@ -302,6 +302,11 @@ variable is where the traffic originates.
 A `bad address` instead of `download timed out` would indicate a DNS failure and
 would prove nothing about network isolation.
 
+The same pair of probes also runs automatically on every push and pull request,
+against a kind cluster created inside the CI runner with Calico installed. See
+the `Network isolation is enforced` step in
+[`.github/workflows/ci.yaml`](../.github/workflows/ci.yaml).
+
 ### 12. No cardholder data in logs (Req 3.3.1, 10.2.1)
 
 The PAN is never passed to a logger. There is no filter masking it afterwards: it
@@ -339,8 +344,10 @@ docker run --rm \
 Expected result: zero HIGH or CRITICAL findings across the four targets. The
 latest report is in [`trivy-report.txt`](trivy-report.txt).
 
-In phase 1 this scan becomes a CI gate with `--exit-code 1`, so that any finding
-stops the pipeline.
+The same scan also runs as a CI gate on every push and pull request, with
+`--exit-code 1` so that any HIGH or CRITICAL finding stops the pipeline before
+the image can be published. See the `Scan with Trivy` step in
+[`.github/workflows/ci.yaml`](../.github/workflows/ci.yaml).
 
 ### 14. Targeted risk analysis (Req 12.3.1)
 
