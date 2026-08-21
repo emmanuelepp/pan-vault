@@ -55,7 +55,7 @@ check "not even with a forged Host header"          404 "$(code -H "Host: ${HOST
 echo
 echo "Logs carry no cardholder data (Req 10.2.1)"
 logs="$(kubectl -n cde logs deploy/pan-vault --tail=500 2>/dev/null)"
-check "no 12 to 19 digit sequence in the pod logs"  no "$(echo "$logs" | grep -Eq '[0-9]{12,19}' && echo yes || echo no)"
+check "no 12 to 19 digit sequence in the pod logs"  no "$(echo "$logs" | sed -E 's/tok_[0-9a-f]{32}//g' | grep -Eq '[0-9]{12,19}' && echo yes || echo no)"
 
 echo
 echo "Runtime hardening (Req 2.2.6, 7.2.1)"

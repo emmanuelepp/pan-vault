@@ -318,10 +318,12 @@ simply never enters. Logs are emitted as structured JSON to stdout and contain
 the token, the brand and the last four digits.
 
 ```bash
-kubectl logs -n cde deploy/pan-vault --tail=200 | grep -E '[0-9]{12,19}'
+kubectl logs -n cde deploy/pan-vault --tail=200 | sed -E 's/tok_[0-9a-f]{32}//g' | grep -E '[0-9]{12,19}'
 ```
 
 Expected result: no matches. No sequence of 12 to 19 digits appears in the logs.
+Tokens are stripped first because 32 random hex characters can contain a long run
+of digits by chance, which would be a false positive, not a leak.
 
 ```bash
 kubectl logs -n cde deploy/pan-vault --tail=200 | grep 'Token issued'

@@ -202,7 +202,9 @@ jobs:
         run: |
           kubectl -n cde logs deploy/pan-vault --tail=500 > /tmp/pod.log
           cat /tmp/pod.log
-          if grep -Eq '[0-9]{12,19}' /tmp/pod.log; then
+          # Tokens are 32 hex chars and can contain long runs of digits by chance:
+          # strip them first, then look for anything that could be a card number.
+          if sed -E 's/tok_[0-9a-f]{32}//g' /tmp/pod.log | grep -Eq '[0-9]{12,19}'; then
             echo "::error::a card-number-like sequence appears in the logs"
             exit 1
           fi
