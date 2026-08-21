@@ -164,8 +164,14 @@ your browser. Run it again whenever you need the port-forwards back;
 | Grafana | http://localhost:3000 | `admin` | printed by the script |
 | Prometheus | http://localhost:9090 | none | none |
 | Alertmanager | http://localhost:9093 | none | none |
+| Swagger UI (API) | http://localhost:8080/swagger | none | none |
 
 ArgoCD and Grafana use self-signed certificates: accept the browser warning.
+
+Swagger UI is the place to try the API by hand: send a PAN, send one with a
+`cvv`, read a token back. It runs as a second copy of the same image on your
+machine with the docs flag on, because the instance inside the cluster keeps
+Swagger off (see below).
 
 **What to look at**
 
@@ -198,8 +204,20 @@ kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-prometheus 909
 kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-alertmanager 9093:9093
 ```
 
-**The API** has no web UI on purpose: Swagger is disabled outside development
-(Req 2.2.4). Call it through the Ingress:
+**Swagger UI** on its own, without the rest of `open.sh`:
+
+```bash
+docker run --rm -d --name pan-vault-swagger -p 8080:8080 \
+  -e PanCrypto__Dek="$(openssl rand -base64 32)" \
+  -e PanVault__EnableApiDocs=true \
+  ghcr.io/emmanuelepp/pan-vault:latest
+# http://localhost:8080/swagger
+```
+
+**The API in the cluster** has no web UI: Swagger only exists when
+`PanVault:EnableApiDocs` is set, and the deployed manifests never set it, so
+development tooling never reaches production (Req 2.2.4). Both instances behave
+the same. Call the one in the cluster through the Ingress:
 
 ```bash
 IP=$(minikube ip -p pan-vault)

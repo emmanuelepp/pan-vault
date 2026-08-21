@@ -70,7 +70,8 @@ ok "controller ready"
 
 say "ArgoCD ${ARGOCD_VERSION}"
 kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl apply -n argocd -f "https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml" >/dev/null
+
+kubectl apply --server-side --force-conflicts -n argocd -f "https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml" >/dev/null
 kubectl -n argocd rollout status deployment/argocd-server --timeout=300s >/dev/null
 ok "ArgoCD ready"
 
