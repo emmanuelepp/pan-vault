@@ -83,16 +83,19 @@ No Kubernetes, just Docker. The image is public.
 docker run --rm -d --name pan-vault -p 8080:8080 \
   -e PanCrypto__Dek="$(openssl rand -base64 32)" \
   ghcr.io/emmanuelepp/pan-vault:latest
-
+```
+```bash
 curl -s -X POST localhost:8080/tokens \
   -H 'Content-Type: application/json' \
   -d '{"pan":"4111111111111111"}'
-
+```
+```bash
 # Sensitive authentication data is rejected
 curl -s -X POST localhost:8080/tokens \
   -H 'Content-Type: application/json' \
   -d '{"pan":"4111111111111111","cvv":"123"}'
-
+```
+```bash
 docker stop pan-vault
 ```
 
@@ -178,15 +181,18 @@ ArgoCD and Grafana use self-signed certificates: accept the browser warning.
 
 ```bash
 kubectl config use-context pan-vault
-
+```
+```bash
 # ArgoCD
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
 kubectl -n argocd port-forward svc/argocd-server 8443:443
-
+```
+```bash
 # Grafana
 kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d; echo
 kubectl -n monitoring port-forward svc/monitoring-grafana 3000:80
-
+```
+```bash
 # Prometheus and Alertmanager
 kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090
 kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-alertmanager 9093:9093
@@ -197,9 +203,11 @@ kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-alertmanager 9
 
 ```bash
 IP=$(minikube ip -p pan-vault)
-
+```
+```bash
 curl -sk --resolve pan-vault.local:443:$IP https://pan-vault.local/healthz
-
+```
+```bash
 curl -sk --resolve pan-vault.local:443:$IP https://pan-vault.local/tokens \
   -X POST -H 'Content-Type: application/json' -d '{"pan":"4111111111111111"}'
 ```
@@ -242,21 +250,25 @@ Three of them are worth running by hand, because the output is the evidence:
 
 ```bash
 IP=$(minikube ip -p pan-vault)
-
+```
+```bash
 # 1. A CVV in the payload is rejected, even nested
 curl -sk --resolve pan-vault.local:443:$IP https://pan-vault.local/tokens \
   -X POST -H 'Content-Type: application/json' \
   -d '{"pan":"4111111111111111","card":{"cvv":"123"}}'
 # {"error":"sensitive_authentication_data","field":"cvv"}
-
+```
+```bash
 # 2. No PAN ever reaches the logs
 kubectl -n cde logs deploy/pan-vault | grep -E '[0-9]{12,19}' || echo "no card numbers in the logs"
-
+```
+```bash
 # 3. Network isolation: the same service, reachable or not depending on where you stand
 kubectl run probe --rm -i --restart=Never --image=busybox:1.36 -- \
   wget -qO- --timeout=5 http://pan-vault.cde:8080/healthz
 # wget: download timed out
-
+```
+```bash
 kubectl -n cde run probe --rm -i --restart=Never --labels=app=gateway --image=busybox:1.36 -- \
   wget -qO- --timeout=5 http://pan-vault:8080/healthz
 # {"status":"ok"}
