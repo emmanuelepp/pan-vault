@@ -430,3 +430,17 @@ FodyWeavers.xsd
 
 # K8s
 k8s/secret.yaml
+
+# Terraform: state and variable files can contain credentials and cluster access
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+
+# Sealed Secrets signing key backup: the only secret carried between clusters
+*sealed-secrets-key*
+*.sealing-key*

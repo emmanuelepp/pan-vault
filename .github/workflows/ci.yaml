@@ -30,6 +30,20 @@ jobs:
       - name: Test
         run: dotnet test PanVault.slnx --no-build -c Release
 
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Scan the repository for secrets
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" \
+            aquasec/trivy:latest fs \
+              --scanners secret \
+              --exit-code 1 \
+              /repo
+
   image:
     name: Build image, scan, publish
     needs: build-test
