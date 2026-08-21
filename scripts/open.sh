@@ -24,8 +24,7 @@ stop >/dev/null 2>&1 || true
 
 say "Starting port-forwards"
 forward() {
-
-  kubectl -n "$1" port-forward "svc/$2" "$3" >/dev/null 2>&1 &
+  setsid kubectl -n "$1" port-forward "svc/$2" "$3" >/dev/null 2>&1 &
   echo $! >> "$PIDFILE"
 }
 forward argocd     argocd-server                             8443:443
@@ -44,7 +43,18 @@ for _ in $(seq 1 20); do curl -sf http://localhost:8080/healthz >/dev/null 2>&1 
 ARGOCD_PASSWORD="$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)"
 GRAFANA_PASSWORD="$(kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d)"
 
-say "Web UIs"
+# Open the tabs first, in the background so a slow browser never blocks the
+# script, then print the credentials last so they stay visible in the terminal.
+opener=""
+if command -v xdg-open >/dev/null 2>&1; then opener="xdg-open"; elif command -v open >/dev/null 2>&1; then opener="open"; fi
+if [ -n "$opener" ]; then
+  for url in https://localhost:8443 http://localhost:3000/dashboards http://localhost:9090/targets http://localhost:9093 http://localhost:8080/swagger; do
+    "$opener" "$url" >/dev/null 2>&1 &
+    sleep 1
+  done
+fi
+
+say "Web UIs (ArgoCD and Grafana ask for a login: user admin, passwords below)"
 cat <<EOF
 
     ArgoCD        https://localhost:8443      user: admin    password: ${ARGOCD_PASSWORD}
@@ -59,15 +69,7 @@ cat <<EOF
 
     The ArgoCD and Grafana certificates are self-signed: accept the browser warning.
 
+    Port-forwards and the Swagger instance keep running in the background.
+    Stop them with: ./scripts/open.sh --stop
+
 EOF
-
-opener=""
-if command -v xdg-open >/dev/null 2>&1; then opener="xdg-open"; elif command -v open >/dev/null 2>&1; then opener="open"; fi
-if [ -n "$opener" ]; then
-  for url in https://localhost:8443 http://localhost:3000/dashboards http://localhost:9090/targets http://localhost:9093 http://localhost:8080/swagger; do
-    "$opener" "$url" >/dev/null 2>&1 || true
-    sleep 1
-  done
-fi
-
-echo "    Port-forwards and the Swagger instance keep running in the background. Stop them with: ./scripts/open.sh --stop"
