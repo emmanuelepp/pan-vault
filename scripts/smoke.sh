@@ -64,7 +64,7 @@ check "runs as non-root"                            true  "$(kubectl -n cde get 
 check "read-only root filesystem"                   true  "$(kubectl -n cde get pod "$pod" -o jsonpath='{.spec.containers[0].securityContext.readOnlyRootFilesystem}')"
 check "all capabilities dropped"                    '["ALL"]' "$(kubectl -n cde get pod "$pod" -o jsonpath='{.spec.containers[0].securityContext.capabilities.drop}')"
 check "no Kubernetes API token mounted"             no "$(kubectl -n cde get pod "$pod" -o jsonpath='{range .spec.volumes[*]}{.name} {end}' | grep -q kube-api-access && echo yes || echo no)"
-check "no shell inside the container"               absent "$(kubectl -n cde exec "$pod" -- /bin/sh -c 'echo present' 2>/dev/null || echo absent)"
+check "no shell inside the container"               absent "$(kubectl -n cde exec "$pod" -- /bin/sh -c 'true' >/dev/null 2>&1 && echo present || echo absent)"
 
 echo
 echo "Network segmentation (Req 1.2.1, 1.3.1)"

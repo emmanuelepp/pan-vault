@@ -80,7 +80,7 @@ that returns the PAN in the clear.
 No Kubernetes, just Docker. The image is public.
 
 ```bash
-docker run --rm -d --name pan-vault -p 8080:8080 \
+docker run --rm -d --name pan-vault-api -p 8080:8080 \
   -e PanCrypto__Dek="$(openssl rand -base64 32)" \
   ghcr.io/emmanuelepp/pan-vault:latest
 ```
@@ -96,7 +96,7 @@ curl -s -X POST localhost:8080/tokens \
   -d '{"pan":"4111111111111111","cvv":"123"}'
 ```
 ```bash
-docker stop pan-vault
+docker stop pan-vault-api
 ```
 
 The container refuses to start without `PanCrypto__Dek`: the key is never baked
