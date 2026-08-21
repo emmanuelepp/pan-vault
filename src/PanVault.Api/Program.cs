@@ -33,7 +33,9 @@ var app = builder.Build();
 
 app.UseSadGuard();
 
-app.MapPrometheusScrapingEndpoint().RequireHost("*:9090");
+app.UseWhen(
+    context => context.Connection.LocalPort == 9090,
+    metrics => metrics.UseOpenTelemetryPrometheusScrapingEndpoint());
 
 if (enableApiDocs)
 {
