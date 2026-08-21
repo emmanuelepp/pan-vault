@@ -1,7 +1,5 @@
 # pan-vault
 
-[![CI](https://github.com/emmanuelepp/pan-vault/actions/workflows/ci.yaml/badge.svg)](https://github.com/emmanuelepp/pan-vault/actions/workflows/ci.yaml)
-
 A cloud-agnostic PAN tokenization service, built to show PCI DSS v4.0.1 controls
 with **verifiable evidence** rather than claims. .NET 10, Kubernetes, GitOps.
 
