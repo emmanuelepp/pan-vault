@@ -25,7 +25,7 @@ PANs.
 | Asset | Primary account numbers (PAN) stored encrypted |
 | Key | 256 bit DEK, AES-GCM |
 | Key scope | Every PAN in the vault. One active key at a time |
-| Location | Kubernetes Secret, mounted as an environment variable in the pod |
+| Location | Kubernetes Secret, mounted as an environment variable in the pod. The Secret is materialized by the Sealed Secrets controller from a ciphertext versioned in git |
 | Estimated volume | Demonstration: tens of records. Reference scenario: up to 10 million PANs |
 
 ## Threats considered
@@ -45,6 +45,13 @@ rotation, a one-time compromise becomes permanent.
 
 **T4. Personnel turnover.** Someone with legitimate access to the Secret leaves
 the organization. Without rotation, their knowledge remains usable.
+
+**T5. Sealing key compromise.** The DEK ciphertext is public in the git history.
+Whoever obtains the Sealed Secrets private key, a Secret in `kube-system`, can
+decrypt every version ever committed, retroactively. Read access to Secrets in
+`kube-system` is therefore part of the CDE trust boundary. The controller rotates
+its sealing key every 30 days, but a suspected exposure requires rotating the DEK
+itself: removing files from git does not undo what was published.
 
 ## Factors affecting likelihood
 

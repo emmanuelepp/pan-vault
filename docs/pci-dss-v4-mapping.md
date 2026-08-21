@@ -29,6 +29,10 @@ contains it, and to the command that verifies it.
 | 12 | No cardholder data in logs | 3.3.1, 10.2.1 | `src/PanVault.Api/Program.cs` |
 | 13 | Components free of known vulnerabilities | 6.3.3 | `docs/trivy-report.txt`, `.github/workflows/ci.yaml` |
 | 14 | Targeted risk analysis | 12.3.1 | `docs/targeted-risk-analysis.md` |
+| 15 | Desired state enforced from git, drift reverted | 6.5.1, 6.5.2, 1.2.2 | `gitops/` |
+| 16 | Secrets versioned only as ciphertext | 3.6.1, 8.6.2 | `gitops/secrets/`, `observability/grafana-admin-sealed.yaml` |
+| 17 | Vendor default credentials replaced | 2.2.2 | `observability/grafana-admin-sealed.yaml`, `gitops/monitoring-app.yaml` |
+| 18 | Monitoring and alerting of the CDE component | 10.7.2, 10.7.3 | `observability/`, `k8s/networkpolicy.yaml` |
 
 ## Verification
 
@@ -354,6 +358,103 @@ the image can be published. See the `Scan with Trivy` step in
 See [`targeted-risk-analysis.md`](targeted-risk-analysis.md), which analyzes the
 DEK cryptoperiod.
 
+### 15. Desired state enforced from git (Req 6.5.1, 6.5.2, 1.2.2)
+
+ArgoCD runs in the cluster and reconciles four `Application` resources defined in
+`gitops/`, all with automated sync, pruning and self-healing. Every change to a
+CDE resource, including network policies, is a commit: reviewable, attributable
+and reversible. A change made directly against the cluster is reverted.
+
+```bash
+kubectl -n argocd get applications
+
+kubectl -n cde delete deployment pan-vault
+kubectl -n cde get deployment pan-vault -w
+```
+
+Expected result: the deployment is recreated within seconds without human
+intervention, and the application stays `Synced` and `Healthy`. The cluster state
+is defined by git, not by whoever holds `kubectl`.
+
+### 16. Secrets versioned only as ciphertext (Req 3.6.1, 8.6.2)
+
+The DEK and the Grafana administrator password live in git as `SealedSecret`
+resources: ciphertext produced with the public key of a controller that runs in
+the cluster. Only that controller holds the private key, so the repository can be
+public and is self-sufficient: cloning it and pointing ArgoCD at it rebuilds the
+system, secrets included, with no manual step.
+
+```bash
+# The key name is visible, the value is ciphertext
+grep -A1 encryptedData gitops/secrets/sealed-secret.yaml
+
+# The live Secret is owned by the SealedSecret, not by a person
+kubectl -n cde get secret pan-vault-dek -o jsonpath='{.metadata.ownerReferences[0].kind}'
+
+# Delete it and it comes back from git
+kubectl -n cde delete secret pan-vault-dek && sleep 5 && kubectl -n cde get secret pan-vault-dek
+```
+
+Expected result: `SealedSecret` as the owner, and the Secret recreated seconds
+after being deleted.
+
+**Trust boundary.** This is not a hash and cannot be brute forced: without the
+private key there is nothing to compare a guess against. The security of every
+ciphertext in the repository rests on the custody of that private key, stored as
+a Secret in `kube-system`. Anyone able to read Secrets there can decrypt
+everything ever committed, including history. The consequences are documented in
+[`targeted-risk-analysis.md`](targeted-risk-analysis.md): RBAC on `kube-system`
+is part of the CDE boundary, the controller rotates its sealing key every 30 days,
+and a suspected key exposure requires rotating the secrets themselves, not just
+removing files from git. In production this role would be taken by a KMS or by
+External Secrets Operator, so that key material never exists in git at all.
+
+### 17. Vendor default credentials replaced (Req 2.2.2)
+
+The Grafana chart ships with the well-known administrator password
+`prom-operator`. It is replaced by a random value generated with `openssl rand`,
+sealed, and consumed by the chart through `existingSecret`. The default Secret no
+longer exists in the cluster.
+
+```bash
+kubectl -n monitoring get secret monitoring-grafana
+kubectl -n monitoring get deploy monitoring-grafana \
+  -o jsonpath='{.spec.template.spec.containers[?(@.name=="grafana")].env[?(@.name=="GF_SECURITY_ADMIN_PASSWORD")].valueFrom.secretKeyRef.name}'
+```
+
+Expected result: `NotFound` for the chart's default Secret, and `grafana-admin`
+as the source of the administrator password.
+
+### 18. Monitoring and alerting (Req 10.7.2, 10.7.3)
+
+The API exposes Prometheus metrics, including `panvault_sad_rejections_total`, a
+counter of requests rejected for carrying sensitive authentication data. Metrics
+are served on a dedicated port, 9090, and the check is on the socket port rather
+than on the `Host` header, so it cannot be bypassed through the Ingress. The
+network policy opens that port only to Prometheus pods from the `monitoring`
+namespace: namespace selector and pod selector combined, so nothing else in that
+namespace qualifies.
+
+A `ServiceMonitor` tells Prometheus where to scrape, a `ConfigMap` carries the
+Grafana dashboard as versioned JSON, and a `PrometheusRule` defines two alerts:
+`PanVaultDown` when the service stops being scraped, and
+`PanVaultSadRejectionSpike` when more than ten requests in five minutes carry SAD.
+
+```bash
+# Never through the Ingress, not even with a forged Host header
+curl -sk -o /dev/null -w '%{http_code}\n' https://pan-vault.local/metrics
+curl -sk -o /dev/null -w '%{http_code}\n' -H 'Host: pan-vault.local:9090' https://pan-vault.local/metrics
+
+# Prometheus reaches it through the network policy
+kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090
+# http://localhost:9090/targets  -> pan-vault UP
+# http://localhost:9090/alerts   -> PanVaultDown, PanVaultSadRejectionSpike
+```
+
+Expected result: `404` for both Ingress requests, the target `UP`, and both
+alert rules loaded. Sending a burst of requests with a `cvv` field increments the
+counter and, past the threshold, fires the alert.
+
 ## Out of scope
 
 The following is not implemented, and the omission is deliberate. A reference
@@ -362,7 +463,7 @@ its limits.
 
 | Requirement | What is missing | Why |
 |-------------|-----------------|-----|
-| 3.6.1.4, 3.7.x | Real KMS or HSM, DEK custody and rotation | The DEK lives in a Kubernetes Secret. In production this would be AWS KMS, Azure Key Vault or an HSM, with automated rotation. The version byte in the encrypted blob leaves the path open to rotate without rewriting existing data |
+| 3.6.1.4, 3.7.x | Real KMS or HSM, DEK custody and rotation | The DEK reaches the cluster as a Kubernetes Secret materialized from a SealedSecret in git, so its custody rests on the sealing key held in `kube-system`. In production this would be AWS KMS, Azure Key Vault or an HSM, with automated rotation. The version byte in the encrypted blob leaves the path open to rotate without rewriting existing data |
 | 3.7.4 | DEK rotation implemented | See [`targeted-risk-analysis.md`](targeted-risk-analysis.md) for the proposed cryptoperiod |
 | 8.4.2, 8.5.1 | MFA for CDE access | There is no authentication layer. The API is open to anyone who can reach the network |
 | 7.2.x | API authentication and authorization | A real tokenization service requires client credentials on every call, and separate permissions for tokenizing and detokenizing |
@@ -372,7 +473,6 @@ its limits.
 | 12.5.2 | Semiannual scope review | An organizational process, not a code artifact |
 | 4.2.1 | Certificate from a real CA | The Ingress uses a self-signed certificate. In production this would be cert-manager with Let's Encrypt, or the corporate CA |
 | 3.2.1 | Real persistence | The store is an in-memory dictionary. It is lost when the pod restarts, and there is no encryption at rest at the disk level because there is no disk |
-| 6.4.3, 11.6.1 | Secret management in GitOps | The DEK is created with `kubectl create secret` and is not versioned, so the repository is not self-sufficient. In phase 2 this moves to Sealed Secrets, which allows versioning the encrypted secret, or to External Secrets Operator against the provider's secret manager |
 
 ## Notes on token scope
 

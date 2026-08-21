@@ -1,0 +1,26 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: pan-vault
+  namespace: monitoring
+spec:
+  groups:
+    - name: pan-vault
+      rules:
+        - alert: PanVaultDown
+          expr: max(up{job="pan-vault"}) == 0 or absent(up{job="pan-vault"})
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "pan-vault is not being scraped"
+            description: "Prometheus has not been able to scrape pan-vault for 2 minutes. The tokenization service may be down or unreachable."
+
+        - alert: PanVaultSadRejectionSpike
+          expr: sum(increase(panvault_sad_rejections_total[5m])) > 10
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Burst of requests carrying sensitive authentication data"
+            description: "More than 10 requests in 5 minutes were rejected for carrying CVV, PIN or track data. Identify the calling client."

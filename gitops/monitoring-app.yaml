@@ -23,6 +23,7 @@ spec:
           prometheusSpec:
             serviceMonitorSelectorNilUsesHelmValues: false
             ruleSelectorNilUsesHelmValues: false
+            nameValidationScheme: Legacy
         grafana:
           admin:
             existingSecret: grafana-admin
